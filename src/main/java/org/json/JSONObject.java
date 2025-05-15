@@ -1703,7 +1703,9 @@ public class JSONObject {
 
     private void populateMap(Object bean, Set<Object> objectsRecord) {
         Class<?> klass = bean.getClass();
-
+		boolean isRecord=RecordUtils.isSupportRecord()&&RecordUtils.isRecord(klass);
+		IS_RECORD.set(isRecord);
+        
         // If klass is a System class then set includeSuperClass to false.
 
         boolean includeSuperClass = klass.getClassLoader() != null;
@@ -1753,6 +1755,7 @@ public class JSONObject {
                 }
             }
         }
+        IS_RECORD.remove();
     }
 
     private static boolean isValidMethodName(String name) {
@@ -1775,11 +1778,15 @@ public class JSONObject {
         }
         String key;
         final String name = method.getName();
+        
+        boolean isRecord=IS_RECORD.get(); 
         if (name.startsWith("get") && name.length() > 3) {
             key = name.substring(3);
         } else if (name.startsWith("is") && name.length() > 2) {
             key = name.substring(2);
-        } else {
+        }else if(isRecord&&!name.equals("toString")&&!name.equals("hashCode")) {
+			return name; 
+		} else {
             return null;
         }
         // if the first letter in the key is not uppercase, then skip.
@@ -2941,4 +2948,56 @@ public class JSONObject {
         if (negativeFirstChar) {return "-0";}
         return "0";
     }
+    
+    private static final class RecordUtils {
+		private static final Method IS_RECORD; 
+		static {
+			Method isRecord; 
+
+			try {
+				// reflective machinery required to access the record components
+				// without a static dependency on Java SE 14 APIs
+				Class<?> c = Class.forName("java.lang.reflect.RecordComponent");
+				isRecord = Class.class.getDeclaredMethod("isRecord"); 
+			} catch (ClassNotFoundException  e) {
+				// pre-Java-14
+				isRecord = null; 
+			}catch (NoSuchMethodException e) {
+				isRecord = null; 
+			} 
+			IS_RECORD = isRecord; 
+		}
+
+		/** Returns true if, and only if, the given class is a record class. */
+		private static boolean isRecord(Class<?> type) {
+			try {
+				return (Boolean) IS_RECORD.invoke(type);
+			} catch (Throwable t) {
+				throw new RuntimeException("Could not determine type (" + type + ")");
+			}
+		}
+		
+		private static int resolveJdkVersion() {
+			String[] versionElements = System.getProperty("java.version").split("\\.");
+			int discard = Integer.parseInt(versionElements[0]),
+					version = discard == 1 ? Integer.parseInt(versionElements[1]) : discard;
+			return version;
+		}
+		
+		private static boolean isSupportRecord() {
+			int version = resolveJdkVersion();
+			if (version > 13) {
+				if (version < 16) {
+					RuntimeMXBean runtimeMxBean = ManagementFactory.getRuntimeMXBean();
+					List<String> arguments = runtimeMxBean.getInputArguments();
+					return arguments.contains("--enable-preview");
+				} else {
+					return true;
+				}
+			} else {
+				return false;
+			}
+		} 
+	} 
+	private static final ThreadLocal<Boolean> IS_RECORD=new ThreadLocal<Boolean>();
 }
